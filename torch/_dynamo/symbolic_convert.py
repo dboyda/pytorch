@@ -52,6 +52,8 @@ import torch
 import torch._logging
 from torch._dynamo.dynamo_profiler import DynamoProfilerState, FunctionTraceTiming
 from torch._dynamo.exc import (
+    FakeTensorObservedException,
+    format_graph_break_message,
     get_dynamo_observed_exception,
     ObservedException,
     TensorifyScalarRestartAnalysis,
@@ -145,6 +147,7 @@ from .utils import (
     _get_error_on_graph_break,
     counters,
     FrameState,
+    get_concrete_sizes_from_symints,
     get_fake_value,
     get_instruction_source_311,
     get_metrics_context,
@@ -187,6 +190,7 @@ from .variables.lists import (
 )
 from .variables.misc import (
     CellVariable,
+    ExceptionVariable,
     NullVariable,
     PythonModuleVariable,
     TracebackVariable,
@@ -2664,28 +2668,41 @@ class InstructionTranslatorBase(
     def _attach_traceback_to_exception(self, exc: ExceptionVals) -> None:
         # based on CPython's PyTraceBack_Here impl
         frame_summary = self.frame_summary()
-        tb = exc.getattro_impl(
-            # pyrefly: ignore [bad-argument-type]
-            self,
-            "__traceback__",
-        )
+        if isinstance(exc, (ExceptionVariable, UserDefinedExceptionObjectVariable)):
+            tb = exc.get_internal_traceback()
+        else:
+            tb = exc.var_getattr(
+                # pyrefly: ignore [bad-argument-type]
+                self,
+                "__traceback__",
+            )
         if not isinstance(tb, (ConstantVariable, TracebackVariable)):
             raise AssertionError(
                 "expected isinstance( tb, (ConstantVariable, TracebackVariable) ) to be true"
             )  # make pyrefly happy
         new_tb = TracebackVariable.from_frame_summary(frame_summary, tb)
-        exc.call_method(
-            self,  # type: ignore[bad-argument-type]
-            "__setattr__",
-            [VariableTracker.build(self, "__traceback__"), new_tb],
-            {},
-        )
+        if isinstance(exc, (ExceptionVariable, UserDefinedExceptionObjectVariable)):
+            exc.set_internal_traceback(new_tb)
+        else:
+            exc.call_method(
+                self,  # type: ignore[bad-argument-type]
+                "__setattr__",
+                [VariableTracker.build(self, "__traceback__"), new_tb],
+                {},
+            )
 
     def _raise_observed_exception(self, exc_: ExceptionVals) -> NoReturn:
         # Propagate `exc_` as an ObservedException to unwind the tracer to the
         # handler, preserving the original raise location via python_stack.
-        observed_exception_type = get_dynamo_observed_exception(exc_.exc_type)  # type: ignore[attr-defined, union-attr]
         python_stack = getattr(exc_, "python_stack", None)
+        if isinstance(exc_, ExceptionVariable) and exc_.fake_tensor_error is not None:
+            raise FakeTensorObservedException(
+                f"raised exception {exc_.debug_repr()}",
+                real_stack=python_stack,
+                fake_tensor_error=exc_.fake_tensor_error,
+                fake_mode=exc_.fake_mode,
+            )
+        observed_exception_type = get_dynamo_observed_exception(exc_.exc_type)  # type: ignore[attr-defined, union-attr]
         raise observed_exception_type(
             f"raised exception {exc_.debug_repr()}", real_stack=python_stack
         )
@@ -2836,11 +2853,14 @@ class InstructionTranslatorBase(
                     "expected _exception_instance_check(val) to be true"
                 )
             typ = BuiltinVariable(val.exc_type)  # type: ignore[attr-defined, union-attr]
-            tb = val.getattro_impl(
-                # pyrefly: ignore[bad-argument-type]
-                self,
-                "__traceback__",
-            )
+            if isinstance(val, (ExceptionVariable, UserDefinedExceptionObjectVariable)):
+                tb = val.get_internal_traceback()
+            else:
+                tb = val.var_getattr(
+                    # pyrefly: ignore[bad-argument-type]
+                    self,
+                    "__traceback__",
+                )
             if sys.version_info >= (3, 14):
                 if not isinstance(self.stack[-4], NullVariable):
                     args.append(self.stack[-4])
@@ -2855,7 +2875,10 @@ class InstructionTranslatorBase(
                 )
             typ = BuiltinVariable(val.exc_type)  # type: ignore[attr-defined]
 
-            tb = val.getattro_impl(self, "__traceback__")
+            if isinstance(val, (ExceptionVariable, UserDefinedExceptionObjectVariable)):
+                tb = val.get_internal_traceback()
+            else:
+                tb = val.var_getattr(self, "__traceback__")
 
         args += [typ, val, tb]
         self.call_function(fn, args, {})
@@ -2868,6 +2891,29 @@ class InstructionTranslatorBase(
 
         def bubble_exception_to_interpreter() -> None:
             # Bubble the exception to the interpreter
+            if isinstance(raised_exception, FakeTensorObservedException):
+                fake_error = raised_exception.fake_tensor_error
+                raw_msg = ""
+                if fake_error is not None:
+                    if len(fake_error.args) == 1 and isinstance(
+                        fake_error.args[0], str
+                    ):
+                        raw_msg = get_concrete_sizes_from_symints(
+                            fake_error.args[0], raised_exception.fake_mode
+                        )
+                    elif not fake_error.args:
+                        raw_msg = ""
+                    else:
+                        raw_msg = "<non-string RuntimeError args>"
+                msg = format_graph_break_message(
+                    "RuntimeError when making fake tensor call",
+                    "",
+                    raw_msg,
+                    [*graph_break_hints.USER_ERROR],
+                )
+                e = exc.TorchRuntimeError(msg, raised_exception.real_stack)
+                raise e.with_traceback(raised_exception.__traceback__) from None
+
             curr_exc = self.exn_vt_stack.get_raised_exception()
             dynamo_exc = exc.get_dynamo_observed_exception(curr_exc.python_type())
             if not isinstance(raised_exception, dynamo_exc):

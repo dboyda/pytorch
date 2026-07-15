@@ -495,6 +495,19 @@ class ObservedTypeError(ObservedException):
     pass
 
 
+class FakeTensorObservedException(ObservedException):
+    def __init__(
+        self,
+        *args: Any,
+        fake_tensor_error: BaseException | None = None,
+        fake_mode: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.fake_tensor_error = fake_tensor_error
+        self.fake_mode = fake_mode
+
+
 observed_exception_map = {
     StopIteration: ObservedUserStopIteration,
     LookupError: ObservedLookupError,
@@ -534,22 +547,27 @@ def raise_observed_exception(
     *,
     args: list[VariableTracker] | list[str] | None = None,
     kwargs: dict[str, VariableTracker] | None = None,
+    unsafe_to_inspect: bool = False,
+    fake_tensor_error: BaseException | None = None,
+    fake_mode: Any | None = None,
 ) -> NoReturn:
+    from .variables import ExceptionVariable
     from .variables.builder import SourcelessBuilder
 
-    if args:
-        args_ = [
-            SourcelessBuilder.create(tx, arg) if isinstance(arg, str) else arg
-            for arg in args
-        ]
+    if unsafe_to_inspect:
+        exception_vt = ExceptionVariable(exc_type, [])
+        exception_vt.mark_unsafe_to_inspect(fake_tensor_error, fake_mode)
     else:
-        args_: list[VariableTracker] = []
-
-    # CPython here raises an exception. Since there is no python code, we have to manually setup the exception
-    # stack and raise the exception.
-    exception_vt = SourcelessBuilder.create(tx, exc_type).call_function(
-        tx, args_, kwargs or {}
-    )
+        if args:
+            args_: list[VariableTracker] = [
+                SourcelessBuilder.create(tx, arg) if isinstance(arg, str) else arg
+                for arg in args
+            ]
+        else:
+            args_ = []
+        exception_vt = SourcelessBuilder.create(tx, exc_type).call_function(
+            tx, args_, kwargs or {}
+        )
     tx.do_raise(exception_vt, None)
 
 
