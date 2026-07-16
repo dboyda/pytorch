@@ -5829,6 +5829,42 @@ class TestLinalg(TestCase):
             self.assertEqual(info[4], 18)
             self.assertTrue(info[1] == info[3] == 0)
 
+    @onlyCUDA
+    @skipCUDAIfNoCusolver
+    @setLinalgBackendsToDefaultFinally
+    @dtypes(*floating_and_complex_types())
+    def test_linalg_batched_lu_register_resident_edge_cases(self, device, dtype):
+        # Test the register-resident kernel for shapes n == i (mod 32)
+        if dtype in (torch.float, torch.double):
+            compute_dtype = torch.double
+        else:
+            compute_dtype = torch.cdouble
+        eps = torch.finfo(dtype).eps
+
+        make_input = partial(make_fullrank_matrices_with_distinct_singular_values, device=device, dtype=dtype)
+        norm = partial(torch.linalg.norm, dim=(-2, -1), ord='fro')
+
+        # shape that dispatches to the register-resident kernel
+        b = 4  # batch
+        n = 256  # shape
+        r = 32  #  testing shapes n + i such that n == i (mod r)
+        buffer = make_input(b, n + r, n + r)
+
+        for i in range(1, r):
+            A = buffer[..., :n + i, :n + i]
+            P, L, U = torch.linalg.lu(A)
+            A, P, L, U = map(lambda t: t.to(compute_dtype), (A, P, L, U))
+
+            residual = P @ L @ U - A
+            # Compute scaled residual
+            # ||PLU - A|| / (||A|| * n * eps)
+            scale = norm(A).mul_(n * eps)
+            scaled_residual = norm(residual).div_(scale)
+
+            # see test_linalg_batched_lu_stability_large_inputs
+            K = 1.0
+            self.assertTrue((scaled_residual < K).all())
+
     @precisionOverride({torch.float32: 1e-2, torch.complex64: 1e-2})
     @skipCUDAIfNoCusolver
     @skipCPUIfNoLapack
