@@ -76,10 +76,10 @@ struct LUTuning {
 };
 
 // Pre-tuned constants per compute capability
-constexpr LUTuning tuning_sm80  = {{44, 44, 24, 16}, 768, 10,  512, {56, 256}, {64, 256}};  // A100
-constexpr LUTuning tuning_sm89  = {{32, 32, 32, 32}, 768, 14,  512, {64, 384}, {96, 256}};  // L40S
-constexpr LUTuning tuning_sm90  = {{52, 36, 52, 24}, 512, 10,  512, {40, 256}, {64, 256}};  // H100
-constexpr LUTuning tuning_sm100 = {{48, 32, 32, 28}, 512, 10,  512, {72, 256}, {64, 256}};  // GB200
+constexpr LUTuning tuning_sm80  = {{44, 44, 24, 16}, 768, 10, 512, {56, 256}, {64, 256}};  // A100
+constexpr LUTuning tuning_sm89  = {{40, 32, 20, 24}, 768, 12, 256, {104, 384}, {104, 256}};  // L40S
+constexpr LUTuning tuning_sm90  = {{52, 36, 52, 24}, 512, 10, 512, {40, 256}, {64, 256}};  // H100
+constexpr LUTuning tuning_sm100 = {{48, 32, 32, 28}, 512, 10, 512, {72, 256}, {64, 256}};  // GB200
 
 inline LUTuning get_tuning() {
   const auto* prop = at::cuda::getCurrentDeviceProperties();
@@ -124,8 +124,8 @@ struct LUWorkspace {
 
   // Permutation workspace
   Tensor pivinfo_buffer;
-  int* pivinfo;   // device pointer, batch_count * m ints
-  int pivinfo_stride;  // number of rows (stride between batches)
+  int* pivinfo; // device pointer, batch_count * m ints
+  int pivinfo_stride; // number of rows (stride between batches)
 };
 
 // Device-side pointer array computation for TRSM.
