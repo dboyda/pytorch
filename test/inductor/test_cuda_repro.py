@@ -1699,6 +1699,13 @@ class CudaReproTests(TestCase):
     def test_emulate_precision_casts_preserves_explicit_precision_cast(
         self, lowp_dtype
     ):
+        if TEST_XPU and lowp_dtype is torch.float16:
+            # triton-xpu folds the fp32->fp16->fp32 barrier to identity, so
+            # emulate_precision_casts does not take effect. Tracked at
+            # https://github.com/intel/torch-xpu-ops/issues/4358.
+            raise unittest.SkipTest(
+                "XPU: emulate_precision_casts fp16 barrier folded by triton-xpu"
+            )
         torch.manual_seed(0)
         torch.cuda.manual_seed_all(0) if TEST_CUDA else torch.xpu.manual_seed_all(0)
         lowp_name = str(lowp_dtype).removeprefix("torch.")
