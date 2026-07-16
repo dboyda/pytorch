@@ -60,9 +60,11 @@ from torch._inductor.runtime.triton_heuristics import (
     CachingAutotunerPlugin,
     DEFER,
     make_matmul_triton_config,
+    NoTritonConfigsError,
     template,
     triton_config,
 )
+from torch._inductor.runtime.triton_compat import CompilationError
 from torch._inductor.test_case import run_tests, TestCase
 from torch._inductor.utils import fresh_cache
 
@@ -307,6 +309,26 @@ class TestTritonHeuristics(TestCase):
 
         with self.assertRaisesRegex(AssertionError, "pre_hook"):
             CachingAutotuner(**args)
+
+    @skipUnless(HAS_GPU_AND_TRITON, "requires gpu and triton")
+    def test_precompile_worker_catches_compilation_error(self):
+        # https://github.com/pytorch/pytorch/issues/190002: a config whose
+        # generated Triton fails to compile raised CompilationError out of
+        # _precompile_worker (crashing cold AOT precompile) instead of being
+        # skipped like OutOfResources/PTXASError. With every config failing, the
+        # worker should surface the regular NoTritonConfigsError rather than the
+        # raw CompilationError.
+        args = self._get_cos_kernel_caching_autotuner_args()
+        autotuner = CachingAutotuner(**args)
+
+        def raise_compilation_error(self, cfg):
+            raise CompilationError("shape mismatch in generated triton")
+
+        with patch.object(
+            CachingAutotuner, "_precompile_config", raise_compilation_error
+        ):
+            with self.assertRaises(NoTritonConfigsError):
+                autotuner._precompile_worker()
 
     def test_autotune_hints_to_configs(self):
         device_props = DeviceProperties.create(torch.device(GPU_TYPE))
