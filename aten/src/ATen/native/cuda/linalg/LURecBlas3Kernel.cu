@@ -409,7 +409,7 @@ void batched_apply_pivots_parallel(
 }
 
 // Register-resident fused panel factorization (similar to MAGMA's sgetf2_fused_device).
-// Each thread owns one row of the panel in registers (rA[WIDTH]).
+// Each thread owns one row of the panel in registers (rA[NB]).
 // Pivot search via shared-memory parallel reduction, virtual row swap via rowid tracking,
 // in-register scale and rank-1 update. One global read at start, one write at end.
 // blockDim.x = nrows (number of rows in the submatrix), one block per batch.
@@ -531,7 +531,7 @@ batched_panel_register_resident_fused_kernel(
   }
 }
 
-// Dispatch helper for register-resident fused panel kernel (WIDTH 1-32)
+// Dispatch helper for register-resident fused panel kernel (NB 1-32)
 template <typename scalar_t>
 bool try_launch_fused_panel_register_resident(
   scalar_t* dA, int64_t matrix_stride, int lda, int m,
@@ -543,7 +543,7 @@ bool try_launch_fused_panel_register_resident(
   // Fused kernel needs one thread per row, max 1024.
   if (nrows > 1024 || nb > MAX_RECNB) return false;
 
-  // Shared memory: WIDTH * sizeof(scalar_t) + nrows * sizeof(real_t) + nrows * sizeof(int) + WIDTH * sizeof(int)
+  // Shared memory: NB * sizeof(scalar_t) + nrows * sizeof(real_t) + nrows * sizeof(int) + NB * sizeof(int)
   using real_t = c10::scalar_value_type<scalar_t>::type;
   size_t shmem = nb * sizeof(scalar_t) + nrows * sizeof(real_t) + nrows * sizeof(int) + nb * sizeof(int);
 
