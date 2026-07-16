@@ -166,7 +166,7 @@ void trailing_matrix_update(
   if (n_right <= 0) return;
 
   // Construct TRSM scalar_t** arrays {
-  int constexpr threads = 64;
+  constexpr int threads = 64;
   int blocks = (batch_count + threads - 1) / threads;
   build_trsm_ptr_kernel<scalar_t><<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
     dA, matrix_stride, lda, batch_count,
@@ -176,8 +176,8 @@ void trailing_matrix_update(
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   // }
 
-  auto constexpr one = static_cast<scalar_t>(1);
-  auto constexpr neg_one = static_cast<scalar_t>(-1);
+  constexpr auto one = static_cast<scalar_t>(1);
+  constexpr auto neg_one = static_cast<scalar_t>(-1);
   at::cuda::blas::trsmBatched<scalar_t>(
     handle,
     CUBLAS_SIDE_LEFT, CUBLAS_FILL_MODE_LOWER,
@@ -307,7 +307,7 @@ void setup_pivinfo(
   int batch_count
 ) {
   int nrows = m - col_start;
-  int constexpr BS = 256;
+  constexpr int BS = 256;
   setup_pivinfo_kernel<BS><<<batch_count, BS, 0, at::cuda::getCurrentCUDAStream()>>>(
     dpivinfo, pivinfo_stride,
     dipiv, ipiv_stride,
@@ -578,7 +578,7 @@ batched_panel_colserial_fused_kernel(
 ) {
   using real_t = c10::scalar_value_type<scalar_t>::type;
 
-  int constexpr NWARPS = BS / 32;
+  constexpr int NWARPS = BS / 32;
   __shared__ real_t sdata[NWARPS];
   __shared__ int sidx[NWARPS];
   __shared__ scalar_t sdiag;
